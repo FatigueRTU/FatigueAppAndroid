@@ -1,0 +1,60 @@
+[System]
+Name='objective_part_1st_level'
+Type='mamdani'
+Version=2.0
+NumInputs=3
+NumOutputs=1
+NumRules=9
+AndMethod='min'
+OrMethod='max'
+ImpMethod='min'
+AggMethod='max'
+DefuzzMethod='centroid'
+
+[Input1]
+Name='mirkskinasanas_biezums'
+Range=[0 100]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 23 23]
+MF3='augsts':'trimf',[23 100 100]
+
+[Input2]
+Name='EEG_beta_ritma_esamiba'
+Range=[0 1]
+NumMFs=2
+MF1='nav':'trimf',[0 0 0.5]
+MF2='ir':'trimf',[0.5 1 1]
+
+[Input3]
+Name='EEG_alfa_ritms'
+Range=[1 3]
+NumMFs=3
+MF1='1s':'trimf',[1 1 1]
+MF2='2s':'trimf',[1 2 2]
+MF3='3s':'trimf',[2 3 3]
+
+
+
+[Output1]
+Name='starpvertejums_1'
+Range=[0 2]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 1 1]
+MF3='augsts':'trimf',[1 2 2]
+
+
+[Rules]
+1 1 0, 1 (1) : 1
+1 0 1, 1 (1) : 1
+1 0 2, 2 (1) : 1
+1 0 3, 3 (1) : 1
+
+2 1 0, 2 (1) : 1
+2 0 1, 2 (1) : 1
+2 0 2, 2 (1) : 1
+2 0 3, 3 (1) : 1
+
+3 0 0, 3 (1) : 1
+

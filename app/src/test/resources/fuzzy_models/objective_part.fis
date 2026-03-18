@@ -1,0 +1,57 @@
+[System]
+Name='objective_part'
+Type='mamdani'
+Version=2.0
+NumInputs=3
+NumOutputs=1
+NumRules=8
+AndMethod='prod'
+OrMethod='max'
+ImpMethod='min'
+AggMethod='probor'
+DefuzzMethod='mom'
+
+[Input1]
+Name='starpvertejums_1'
+Range=[0 2]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 1 1]
+MF3='augsts':'trimf',[1 2 2]
+
+[Input2]
+Name='starpvertejums_2'
+Range=[0 2]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 1 1]
+MF3='augsts':'trimf',[1 2 2]
+
+[Input3]
+Name='starpvertejums_3'
+Range=[0 2]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 1 1]
+MF3='augsts':'trimf',[1 2 2]
+
+[Output1]
+Name='objective_part'
+Range=[0 2]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 1 1]
+MF3='augsts':'trimf',[1 2 2]
+
+
+[Rules]
+1 1 1, 1 (1) : 1
+1 2 2, 2 (1) : 1
+1 3 3, 3 (1) : 1
+
+2 1 2, 2 (1) : 1
+2 2 1, 2 (1) : 1
+2 2 2, 2 (1) : 1
+2 3 3, 3 (1) : 1
+
+3 0 0, 3 (1) : 1

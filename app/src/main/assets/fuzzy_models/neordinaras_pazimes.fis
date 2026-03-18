@@ -1,0 +1,65 @@
+[System]
+Name='neordinaras_pazimes'
+Type='mamdani'
+Version=2.0
+NumInputs=4
+NumOutputs=1
+NumRules=16
+AndMethod='min'
+OrMethod='max'
+ImpMethod='min'
+AggMethod='max'
+DefuzzMethod='centroid'
+
+[Input1]
+Name='mikromiegs'
+Range=[0 1]
+NumMFs=2
+MF1='ne':'trimf',[0 0 0]
+MF2='ja':'trimf',[0 1 1]
+
+[Input2]
+Name='narkolepsija'
+Range=[0 1]
+NumMFs=2
+MF1='ne':'trimf',[0 0 0]
+MF2='ja':'trimf',[0 1 1]
+
+[Input3]
+Name='miegainiba_bez_noguruma'
+Range=[0 1]
+NumMFs=2
+MF1='ne':'trimf',[0 0 0]
+MF2='ja':'trimf',[0 1 1]
+
+[Input4]
+Name='bezmiegs'
+Range=[0 1]
+NumMFs=2
+MF1='ne':'trimf',[0 0 0]
+MF2='ja':'trimf',[0 1 1]
+
+[Output1]
+Name='neordinaras_pazimes_rezultats'
+Range=[0 1]
+NumMFs=2
+MF1='nav':'trimf',[0 0 0]
+MF2='ir':'trimf',[0 1 1]
+
+[Rules]
+1 1 1 1, 1 (1) : 1
+1 1 1 2, 2 (1) : 1
+1 1 2 1, 2 (1) : 1
+1 1 2 2, 2 (1) : 1
+1 2 1 1, 2 (1) : 1
+1 2 1 2, 2 (1) : 1
+1 2 2 1, 2 (1) : 1
+1 2 2 2, 2 (1) : 1
+2 1 1 1, 2 (1) : 1
+2 1 1 2, 2 (1) : 1
+2 1 2 1, 2 (1) : 1
+2 1 2 2, 2 (1) : 1
+2 2 1 1, 2 (1) : 1
+2 2 1 2, 2 (1) : 1
+2 2 2 1, 2 (1) : 1
+2 2 2 2, 2 (1) : 1

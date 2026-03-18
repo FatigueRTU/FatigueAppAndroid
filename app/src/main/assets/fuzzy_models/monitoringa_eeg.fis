@@ -1,0 +1,43 @@
+[System]
+Name='monitoringa_eeg'
+Type='mamdani'
+Version=2.0
+NumInputs=2
+NumOutputs=1
+NumRules=6
+AndMethod='min'
+OrMethod='max'
+ImpMethod='min'
+AggMethod='max'
+DefuzzMethod='centroid'
+
+[Input1]
+Name='EEG_alfa_ilgums_sekundes'
+Range=[0 10]
+NumMFs=3
+MF1='iss':'trimf',[0 0 2]
+MF2='videjs':'trimf',[2 3 3]
+MF3='garss':'trimf',[3 10 10]
+
+[Input2]
+Name='EEG_beta_pastav'
+Range=[0 1]
+NumMFs=2
+MF1='ne':'trimf',[0 0 0]
+MF2='ja':'trimf',[0 1 1]
+
+[Output1]
+Name='EEG_vertejums'
+Range=[0 2]
+NumMFs=3
+MF1='zems':'trimf',[0 0 0]
+MF2='videjs':'trimf',[0 1 1]
+MF3='augsts':'trimf',[1 2 2]
+
+[Rules]
+1 1, 2 (1) : 1
+1 2, 1 (1) : 1
+2 1, 1 (1) : 1
+2 2, 1 (1) : 1
+3 1, 3 (1) : 1
+3 2, 3 (1) : 1
