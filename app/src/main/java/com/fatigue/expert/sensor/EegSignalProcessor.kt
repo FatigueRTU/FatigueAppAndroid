@@ -59,17 +59,17 @@ class EegSignalProcessor {
         val now = data.timestamp
         val signalGood = data.signalQuality < 50 // 0 = perfect, 200 = no contact
 
-        // ── Track blinks ──
+        // ── Track blinks (from NskAlgoSdk blink detection) ──
         if (data.blinkDetected) {
             blinkTimestamps.add(now)
         }
-        // Remove blinks older than 1 minute
         blinkTimestamps.removeAll { now - it > BLINK_WINDOW_MS }
         val blinksPerMinute = blinkTimestamps.size
 
         // ── Track alpha prominence duration ──
-        val totalPower = data.delta + data.theta + data.alpha + data.beta + data.gamma
-        val alphaRatio = if (totalPower > 0) data.alpha / totalPower else 0f
+        val totalPower = (data.delta + data.theta + data.lowAlpha + data.highAlpha +
+                data.lowBeta + data.highBeta + data.lowGamma + data.middleGamma).toFloat()
+        val alphaRatio = if (totalPower > 0) (data.lowAlpha + data.highAlpha).toFloat() / totalPower else 0f
 
         if (alphaRatio > ALPHA_THRESHOLD && signalGood) {
             if (alphaHighStart == null) alphaHighStart = now
@@ -88,10 +88,14 @@ class EegSignalProcessor {
             }
         }
 
-        // Compute averaged band powers
-        val avgAlpha = bandPowerHistory.map { it.alpha }.average().toFloat()
-        val avgBeta = bandPowerHistory.map { it.beta }.average().toFloat()
-        val avgTheta = bandPowerHistory.map { it.theta }.average().toFloat()
+        // Compute averaged band powers (relative)
+        val avgAlpha = bandPowerHistory.map { it.alpha.toDouble() }.average().toFloat()
+        val avgBeta = bandPowerHistory.map { it.beta.toDouble() }.average().toFloat()
+        val avgTheta = bandPowerHistory.map {
+            val total = (it.delta + it.theta + it.lowAlpha + it.highAlpha +
+                    it.lowBeta + it.highBeta + it.lowGamma + it.middleGamma).toFloat().coerceAtLeast(1f)
+            it.theta.toFloat() / total
+        }.average().toFloat()
 
         // ── Compute J1–J4 indices (Thesis Table 5.1) ──
         val j1Raw = if (avgAlpha + avgTheta > 0) avgBeta / (avgAlpha + avgTheta) else 0f

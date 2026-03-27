@@ -10,6 +10,7 @@ import com.neurosky.AlgoSdk.NskAlgoSdk
 import com.neurosky.AlgoSdk.NskAlgoType
 import com.neurosky.connection.ConnectionStates
 import com.neurosky.connection.DataType.MindDataType
+import com.neurosky.connection.EEGPower
 import com.neurosky.connection.TgStreamHandler
 import com.neurosky.connection.TgStreamReader
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,47 +19,48 @@ import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Manages Bluetooth connection to NeuroSky MindWave Mobile 2.
- * Wraps TgStreamReader + NskAlgoSdk and exposes data via StateFlow.
- *
- * Usage:
- *   val conn = MindWaveConnection(context)
- *   conn.connect(deviceAddress)
- *   // observe conn.connectionState and conn.data
- *   conn.disconnect()
+ * Uses TgStreamReader directly — band powers, attention, meditation
+ * are sent by the TGAM chip over serial every ~1 second.
+ * Raw EEG is streamed at 512 Hz for waveform plotting.
  */
 class MindWaveConnection(context: Context) {
 
     companion object {
         private const val TAG = "MindWave"
         const val MINDWAVE_DEVICE_NAME = "MindWave Mobile"
-
-        init {
-            try {
-                System.loadLibrary("NskAlgo")
-                Log.i(TAG, "NskAlgo native library loaded successfully")
-            } catch (e: UnsatisfiedLinkError) {
-                Log.e(TAG, "Failed to load NskAlgo native library: ${e.message}")
-            }
-        }
+        const val RAW_BUFFER_SIZE = 512 // 1 second of raw EEG at 512 Hz
     }
 
     enum class ConnectionState {
         DISCONNECTED, CONNECTING, CONNECTED, ERROR
     }
 
-    /** Raw data packet from the device */
     data class MindWaveData(
-        val attention: Int = 0,          // 0–100
-        val meditation: Int = 0,         // 0–100
+        val attention: Int = 0,          // 0-100, from TGAM eSense
+        val meditation: Int = 0,         // 0-100, from TGAM eSense
         val signalQuality: Int = 200,    // 0=good, 200=no contact
-        val blinkStrength: Int = 0,      // 0–255, event-based
+        // Band powers (direct from TGAM chip, absolute values)
+        val delta: Int = 0,
+        val theta: Int = 0,
+        val lowAlpha: Int = 0,
+        val highAlpha: Int = 0,
+        val lowBeta: Int = 0,
+        val highBeta: Int = 0,
+        val lowGamma: Int = 0,
+        val middleGamma: Int = 0,
+        // Derived
+        val alpha: Float = 0f,   // lowAlpha + highAlpha (normalized)
+        val beta: Float = 0f,    // lowBeta + highBeta (normalized)
+        // Blink detection (from NskAlgoSdk)
+        val blinkStrength: Int = 0,      // 0-255
         val blinkDetected: Boolean = false,
-        // Band power (relative, from NskAlgoSdk)
-        val delta: Float = 0f,
-        val theta: Float = 0f,
-        val alpha: Float = 0f,
-        val beta: Float = 0f,
-        val gamma: Float = 0f,
+        val timestamp: Long = System.currentTimeMillis()
+    )
+
+    /** Raw EEG waveform buffer (512 samples = 1 second at 512 Hz) */
+    data class RawEegBuffer(
+        val samples: ShortArray = ShortArray(RAW_BUFFER_SIZE),
+        val index: Int = 0,
         val timestamp: Long = System.currentTimeMillis()
     )
 
@@ -68,18 +70,39 @@ class MindWaveConnection(context: Context) {
     private val _data = MutableStateFlow(MindWaveData())
     val data: StateFlow<MindWaveData> = _data.asStateFlow()
 
+    private val _rawEeg = MutableStateFlow(RawEegBuffer())
+    val rawEeg: StateFlow<RawEegBuffer> = _rawEeg.asStateFlow()
+
     private val bluetoothAdapter: BluetoothAdapter? =
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
     private var tgStreamReader: TgStreamReader? = null
-    private var nskAlgoSdk: NskAlgoSdk? = null
-    private val rawBuffer = ShortArray(512)
+    private val rawBuffer = ShortArray(RAW_BUFFER_SIZE)
     private var rawIndex = 0
+    private var nskAlgoSdk: NskAlgoSdk? = null
 
-    // Current values (updated from callbacks, merged into _data)
-    private var curAttention = 0
-    private var curMeditation = 0
-    private var curSignalQuality = 200
+    init {
+        // Set up NskAlgoSdk for blink detection only
+        try {
+            System.loadLibrary("NskAlgo")
+            val sdk = NskAlgoSdk()
+            nskAlgoSdk = sdk
+            sdk.setOnEyeBlinkDetectionListener { strength ->
+                Log.d(TAG, "Blink detected: strength=$strength")
+                _data.value = _data.value.copy(
+                    blinkStrength = strength,
+                    blinkDetected = true,
+                    timestamp = System.currentTimeMillis()
+                )
+            }
+            val algoTypes = NskAlgoType.NSK_ALGO_TYPE_BLINK.value
+            val initResult = NskAlgoSdk.NskAlgoInit(algoTypes, "")
+            Log.i(TAG, "NskAlgoInit (blink only) result: $initResult")
+            NskAlgoSdk.NskAlgoStart(false)
+        } catch (e: Exception) {
+            Log.e(TAG, "NskAlgo blink init failed: ${e.message}")
+        }
+    }
 
     private val streamCallback = object : TgStreamHandler {
         override fun onStatesChanged(connectionStates: Int) {
@@ -107,121 +130,82 @@ class MindWaveConnection(context: Context) {
             Log.e(TAG, "Record fail: $flag")
         }
 
-        override fun onChecksumFail(payload: ByteArray?, length: Int, checksum: Int) {
-            Log.e(TAG, "Checksum fail")
-        }
+        override fun onChecksumFail(payload: ByteArray?, length: Int, checksum: Int) {}
 
         override fun onDataReceived(datatype: Int, data: Int, obj: Any?) {
             when (datatype) {
                 MindDataType.CODE_ATTENTION -> {
-                    curAttention = data
                     Log.d(TAG, "Attention: $data")
-                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_ATT.value, shortArrayOf(data.toShort()), 1) } catch (e: Exception) { Log.e(TAG, "AlgoStream ATT error: ${e.message}") }
-                    emitData()
+                    _data.value = _data.value.copy(
+                        attention = data,
+                        timestamp = System.currentTimeMillis()
+                    )
                 }
                 MindDataType.CODE_MEDITATION -> {
-                    curMeditation = data
                     Log.d(TAG, "Meditation: $data")
-                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_MED.value, shortArrayOf(data.toShort()), 1) } catch (e: Exception) { Log.e(TAG, "AlgoStream MED error: ${e.message}") }
-                    emitData()
+                    _data.value = _data.value.copy(
+                        meditation = data,
+                        timestamp = System.currentTimeMillis()
+                    )
                 }
                 MindDataType.CODE_POOR_SIGNAL -> {
-                    curSignalQuality = data
-                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_PQ.value, shortArrayOf(data.toShort()), 1) } catch (e: Exception) { Log.e(TAG, "AlgoStream PQ error: ${e.message}") }
-                    emitData()
-                }
-                MindDataType.CODE_RAW -> {
-                    rawBuffer[rawIndex++] = data.toShort()
-                    if (rawIndex >= 512) {
-                        Log.d(TAG, "Raw EEG batch: 512 samples")
-                        try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_EEG.value, rawBuffer, rawIndex) } catch (e: Exception) { Log.e(TAG, "AlgoStream EEG error: ${e.message}") }
-                        rawIndex = 0
-                    }
+                    _data.value = _data.value.copy(
+                        signalQuality = data,
+                        blinkDetected = false, // reset blink flag
+                        timestamp = System.currentTimeMillis()
+                    )
+                    // Feed to algo SDK for blink detection
+                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_PQ.value, shortArrayOf(data.toShort()), 1) } catch (_: Exception) {}
                 }
                 MindDataType.CODE_EEGPOWER -> {
-                    // Direct EEG power data from TgStreamReader (no algo SDK needed)
-                    Log.d(TAG, "EEG Power received")
+                    // Band powers sent directly by TGAM chip every ~1 second
+                    val eeg = obj as? EEGPower
+                    if (eeg != null && eeg.isValidate) {
+                        val totalPower = (eeg.delta + eeg.theta + eeg.lowAlpha + eeg.highAlpha +
+                                eeg.lowBeta + eeg.highBeta + eeg.lowGamma + eeg.middleGamma).toFloat()
+                                .coerceAtLeast(1f)
+                        val alphaSum = (eeg.lowAlpha + eeg.highAlpha).toFloat()
+                        val betaSum = (eeg.lowBeta + eeg.highBeta).toFloat()
+
+                        Log.d(TAG, "EEGPower: d=${eeg.delta} t=${eeg.theta} " +
+                                "la=${eeg.lowAlpha} ha=${eeg.highAlpha} " +
+                                "lb=${eeg.lowBeta} hb=${eeg.highBeta} " +
+                                "lg=${eeg.lowGamma} mg=${eeg.middleGamma}")
+
+                        _data.value = _data.value.copy(
+                            delta = eeg.delta,
+                            theta = eeg.theta,
+                            lowAlpha = eeg.lowAlpha,
+                            highAlpha = eeg.highAlpha,
+                            lowBeta = eeg.lowBeta,
+                            highBeta = eeg.highBeta,
+                            lowGamma = eeg.lowGamma,
+                            middleGamma = eeg.middleGamma,
+                            alpha = alphaSum / totalPower,
+                            beta = betaSum / totalPower,
+                            timestamp = System.currentTimeMillis()
+                        )
+                    }
+                }
+                MindDataType.CODE_RAW -> {
+                    // Raw EEG at 512 Hz — for waveform plotting
+                    rawBuffer[rawIndex] = data.toShort()
+                    rawIndex++
+                    if (rawIndex >= RAW_BUFFER_SIZE) {
+                        // Feed to algo SDK for blink detection
+                        try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_EEG.value, rawBuffer, rawIndex) } catch (_: Exception) {}
+                        _rawEeg.value = RawEegBuffer(
+                            samples = rawBuffer.copyOf(),
+                            index = RAW_BUFFER_SIZE,
+                            timestamp = System.currentTimeMillis()
+                        )
+                        rawIndex = 0
+                    }
                 }
             }
         }
     }
 
-    init {
-        setupAlgoSdk()
-    }
-
-    private fun setupAlgoSdk() {
-        val sdk = NskAlgoSdk()
-        nskAlgoSdk = sdk
-
-        sdk.setOnAttAlgoIndexListener { attentionValue ->
-            Log.d(TAG, "AlgoSDK Attention: $attentionValue")
-            curAttention = attentionValue
-            emitData()
-        }
-
-        sdk.setOnBPAlgoIndexListener { delta, theta, alpha, beta, gamma ->
-            Log.d(TAG, "AlgoSDK BandPower: d=$delta t=$theta a=$alpha b=$beta g=$gamma")
-            _data.value = _data.value.copy(
-                delta = delta, theta = theta, alpha = alpha,
-                beta = beta, gamma = gamma,
-                attention = curAttention, meditation = curMeditation,
-                signalQuality = curSignalQuality,
-                blinkDetected = false,
-                timestamp = System.currentTimeMillis()
-            )
-        }
-
-        sdk.setOnEyeBlinkDetectionListener { strength ->
-            Log.d(TAG, "AlgoSDK Blink: $strength")
-            _data.value = _data.value.copy(
-                blinkStrength = strength,
-                blinkDetected = true,
-                attention = curAttention, meditation = curMeditation,
-                signalQuality = curSignalQuality,
-                timestamp = System.currentTimeMillis()
-            )
-        }
-
-        sdk.setOnMedAlgoIndexListener { meditationValue ->
-            Log.d(TAG, "AlgoSDK Meditation: $meditationValue")
-            curMeditation = meditationValue
-            emitData()
-        }
-
-        sdk.setOnSignalQualityListener { level ->
-            Log.d(TAG, "AlgoSDK Signal quality level: $level")
-        }
-
-        // Initialize algorithms: attention + meditation + band power + blink detection
-        val algoTypes = NskAlgoType.NSK_ALGO_TYPE_ATT.value or
-                NskAlgoType.NSK_ALGO_TYPE_MED.value or
-                NskAlgoType.NSK_ALGO_TYPE_BP.value or
-                NskAlgoType.NSK_ALGO_TYPE_BLINK.value
-        try {
-            val initResult = NskAlgoSdk.NskAlgoInit(algoTypes, "")
-            Log.i(TAG, "NskAlgoInit result: $initResult (types=0x${algoTypes.toString(16)})")
-            val startResult = NskAlgoSdk.NskAlgoStart(false)
-            Log.i(TAG, "NskAlgoStart result: $startResult")
-        } catch (e: Exception) {
-            Log.e(TAG, "NskAlgo init failed: ${e.message}", e)
-        }
-    }
-
-    private fun emitData() {
-        _data.value = _data.value.copy(
-            attention = curAttention,
-            meditation = curMeditation,
-            signalQuality = curSignalQuality,
-            blinkDetected = false,
-            timestamp = System.currentTimeMillis()
-        )
-    }
-
-    /**
-     * Find paired MindWave devices.
-     * Returns list of (name, MAC address) pairs.
-     */
     @Suppress("MissingPermission")
     fun findPairedDevices(): List<Pair<String, String>> {
         return bluetoothAdapter?.bondedDevices
@@ -230,9 +214,6 @@ class MindWaveConnection(context: Context) {
             ?: emptyList()
     }
 
-    /**
-     * Connect to a MindWave device by MAC address.
-     */
     @Suppress("MissingPermission")
     fun connect(deviceAddress: String) {
         if (bluetoothAdapter == null) {
@@ -240,9 +221,7 @@ class MindWaveConnection(context: Context) {
             _connectionState.value = ConnectionState.ERROR
             return
         }
-
-        disconnect() // clean up any existing connection
-
+        disconnect()
         try {
             val device: BluetoothDevice = bluetoothAdapter.getRemoteDevice(deviceAddress)
             _connectionState.value = ConnectionState.CONNECTING
@@ -255,16 +234,10 @@ class MindWaveConnection(context: Context) {
         }
     }
 
-    /**
-     * Disconnect and clean up.
-     */
     fun disconnect() {
         try {
             tgStreamReader?.let {
-                if (it.isBTConnected) {
-                    it.stop()
-                    it.close()
-                }
+                if (it.isBTConnected) { it.stop(); it.close() }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Disconnect error: ${e.message}")
@@ -274,6 +247,5 @@ class MindWaveConnection(context: Context) {
         _connectionState.value = ConnectionState.DISCONNECTED
     }
 
-    /** Check if Bluetooth is enabled */
     fun isBluetoothEnabled(): Boolean = bluetoothAdapter?.isEnabled == true
 }

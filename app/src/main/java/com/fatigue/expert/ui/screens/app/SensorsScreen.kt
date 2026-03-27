@@ -67,6 +67,7 @@ fun SensorsScreen(
     val mindWaveVm: MindWaveViewModel = viewModel()
     val connState by mindWaveVm.connectionState.collectAsState()
     val rawData by mindWaveVm.rawData.collectAsState()
+    val rawEeg by mindWaveVm.connection.rawEeg.collectAsState()
     val objInputs by mindWaveVm.objectiveInputs.collectAsState()
 
     var useSimulation by remember { mutableStateOf(false) }
@@ -329,24 +330,41 @@ fun SensorsScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
+                // Raw EEG waveform plot
+                EegWaveformPlot(
+                    samples = rawEeg.samples,
+                    sampleCount = rawEeg.index,
+                    blinkDetected = rawData.blinkDetected,
+                    blinkStrength = rawData.blinkStrength,
+                    signalQuality = rawData.signalQuality,
+                    attention = rawData.attention,
+                    meditation = rawData.meditation
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 // Live EEG data display
-                Text(BiString("Tiešsaistes EEG dati", "Live EEG Data").get(),
+                Text(BiString("Joslu jaudas dati", "Band Power Data").get(),
                     style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Band power bars
+                val totalPwr = (rawData.delta + rawData.theta + rawData.lowAlpha + rawData.highAlpha +
+                        rawData.lowBeta + rawData.highBeta + rawData.lowGamma + rawData.middleGamma).toFloat().coerceAtLeast(1f)
                 Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(modifier = Modifier.padding(12.dp)) {
-                        BandPowerRow("Delta (δ)", rawData.delta)
-                        BandPowerRow("Theta (θ)", rawData.theta)
-                        BandPowerRow("Alpha (α)", rawData.alpha)
-                        BandPowerRow("Beta (β)", rawData.beta)
-                        BandPowerRow("Gamma (γ)", rawData.gamma)
+                        BandPowerRow("Delta (δ)", rawData.delta.toFloat() / totalPwr)
+                        BandPowerRow("Theta (θ)", rawData.theta.toFloat() / totalPwr)
+                        BandPowerRow("Alpha (α)", (rawData.lowAlpha + rawData.highAlpha).toFloat() / totalPwr)
+                        BandPowerRow("Beta (β)", (rawData.lowBeta + rawData.highBeta).toFloat() / totalPwr)
+                        BandPowerRow("Gamma (γ)", (rawData.lowGamma + rawData.middleGamma).toFloat() / totalPwr)
                         Divider(modifier = Modifier.padding(vertical = 6.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Attention: ${rawData.attention}", style = MaterialTheme.typography.bodySmall)
                             Text("Meditation: ${rawData.meditation}", style = MaterialTheme.typography.bodySmall)
                         }
+                        Text("Signal: ${rawData.signalQuality}", style = MaterialTheme.typography.bodySmall,
+                            color = if (rawData.signalQuality == 0) Color(0xFF4CAF50) else Color(0xFFFFC107))
                     }
                 }
 
