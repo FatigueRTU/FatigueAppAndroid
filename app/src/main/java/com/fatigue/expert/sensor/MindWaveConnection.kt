@@ -31,6 +31,15 @@ class MindWaveConnection(context: Context) {
     companion object {
         private const val TAG = "MindWave"
         const val MINDWAVE_DEVICE_NAME = "MindWave Mobile"
+
+        init {
+            try {
+                System.loadLibrary("NskAlgo")
+                Log.i(TAG, "NskAlgo native library loaded successfully")
+            } catch (e: UnsatisfiedLinkError) {
+                Log.e(TAG, "Failed to load NskAlgo native library: ${e.message}")
+            }
+        }
     }
 
     enum class ConnectionState {
@@ -106,37 +115,32 @@ class MindWaveConnection(context: Context) {
             when (datatype) {
                 MindDataType.CODE_ATTENTION -> {
                     curAttention = data
-                    NskAlgoSdk.NskAlgoDataStream(
-                        NskAlgoDataType.NSK_ALGO_DATA_TYPE_ATT.value,
-                        shortArrayOf(data.toShort()), 1
-                    )
+                    Log.d(TAG, "Attention: $data")
+                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_ATT.value, shortArrayOf(data.toShort()), 1) } catch (e: Exception) { Log.e(TAG, "AlgoStream ATT error: ${e.message}") }
                     emitData()
                 }
                 MindDataType.CODE_MEDITATION -> {
                     curMeditation = data
-                    NskAlgoSdk.NskAlgoDataStream(
-                        NskAlgoDataType.NSK_ALGO_DATA_TYPE_MED.value,
-                        shortArrayOf(data.toShort()), 1
-                    )
+                    Log.d(TAG, "Meditation: $data")
+                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_MED.value, shortArrayOf(data.toShort()), 1) } catch (e: Exception) { Log.e(TAG, "AlgoStream MED error: ${e.message}") }
                     emitData()
                 }
                 MindDataType.CODE_POOR_SIGNAL -> {
                     curSignalQuality = data
-                    NskAlgoSdk.NskAlgoDataStream(
-                        NskAlgoDataType.NSK_ALGO_DATA_TYPE_PQ.value,
-                        shortArrayOf(data.toShort()), 1
-                    )
+                    try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_PQ.value, shortArrayOf(data.toShort()), 1) } catch (e: Exception) { Log.e(TAG, "AlgoStream PQ error: ${e.message}") }
                     emitData()
                 }
                 MindDataType.CODE_RAW -> {
                     rawBuffer[rawIndex++] = data.toShort()
                     if (rawIndex >= 512) {
-                        NskAlgoSdk.NskAlgoDataStream(
-                            NskAlgoDataType.NSK_ALGO_DATA_TYPE_EEG.value,
-                            rawBuffer, rawIndex
-                        )
+                        Log.d(TAG, "Raw EEG batch: 512 samples")
+                        try { NskAlgoSdk.NskAlgoDataStream(NskAlgoDataType.NSK_ALGO_DATA_TYPE_EEG.value, rawBuffer, rawIndex) } catch (e: Exception) { Log.e(TAG, "AlgoStream EEG error: ${e.message}") }
                         rawIndex = 0
                     }
+                }
+                MindDataType.CODE_EEGPOWER -> {
+                    // Direct EEG power data from TgStreamReader (no algo SDK needed)
+                    Log.d(TAG, "EEG Power received")
                 }
             }
         }
@@ -147,49 +151,60 @@ class MindWaveConnection(context: Context) {
     }
 
     private fun setupAlgoSdk() {
-        nskAlgoSdk = NskAlgoSdk().apply {
-            setOnAttAlgoIndexListener { attentionValue ->
-                curAttention = attentionValue
-                emitData()
-            }
+        val sdk = NskAlgoSdk()
+        nskAlgoSdk = sdk
 
-            setOnBPAlgoIndexListener { delta, theta, alpha, beta, gamma ->
-                _data.value = _data.value.copy(
-                    delta = delta, theta = theta, alpha = alpha,
-                    beta = beta, gamma = gamma,
-                    attention = curAttention, meditation = curMeditation,
-                    signalQuality = curSignalQuality,
-                    blinkDetected = false,
-                    timestamp = System.currentTimeMillis()
-                )
-            }
+        sdk.setOnAttAlgoIndexListener { attentionValue ->
+            Log.d(TAG, "AlgoSDK Attention: $attentionValue")
+            curAttention = attentionValue
+            emitData()
+        }
 
-            setOnEyeBlinkDetectionListener { strength ->
-                _data.value = _data.value.copy(
-                    blinkStrength = strength,
-                    blinkDetected = true,
-                    attention = curAttention, meditation = curMeditation,
-                    signalQuality = curSignalQuality,
-                    timestamp = System.currentTimeMillis()
-                )
-            }
+        sdk.setOnBPAlgoIndexListener { delta, theta, alpha, beta, gamma ->
+            Log.d(TAG, "AlgoSDK BandPower: d=$delta t=$theta a=$alpha b=$beta g=$gamma")
+            _data.value = _data.value.copy(
+                delta = delta, theta = theta, alpha = alpha,
+                beta = beta, gamma = gamma,
+                attention = curAttention, meditation = curMeditation,
+                signalQuality = curSignalQuality,
+                blinkDetected = false,
+                timestamp = System.currentTimeMillis()
+            )
+        }
 
-            setOnMedAlgoIndexListener { meditationValue ->
-                curMeditation = meditationValue
-                emitData()
-            }
+        sdk.setOnEyeBlinkDetectionListener { strength ->
+            Log.d(TAG, "AlgoSDK Blink: $strength")
+            _data.value = _data.value.copy(
+                blinkStrength = strength,
+                blinkDetected = true,
+                attention = curAttention, meditation = curMeditation,
+                signalQuality = curSignalQuality,
+                timestamp = System.currentTimeMillis()
+            )
+        }
 
-            setOnSignalQualityListener { level ->
-                Log.d(TAG, "Signal quality level: $level")
-            }
+        sdk.setOnMedAlgoIndexListener { meditationValue ->
+            Log.d(TAG, "AlgoSDK Meditation: $meditationValue")
+            curMeditation = meditationValue
+            emitData()
+        }
 
-            // Initialize algorithms: attention + meditation + band power + blink detection
-            val algoTypes = NskAlgoType.NSK_ALGO_TYPE_ATT.value +
-                    NskAlgoType.NSK_ALGO_TYPE_MED.value +
-                    NskAlgoType.NSK_ALGO_TYPE_BP.value +
-                    NskAlgoType.NSK_ALGO_TYPE_BLINK.value
-            NskAlgoSdk.NskAlgoInit(algoTypes, "")
-            NskAlgoSdk.NskAlgoStart(false)
+        sdk.setOnSignalQualityListener { level ->
+            Log.d(TAG, "AlgoSDK Signal quality level: $level")
+        }
+
+        // Initialize algorithms: attention + meditation + band power + blink detection
+        val algoTypes = NskAlgoType.NSK_ALGO_TYPE_ATT.value or
+                NskAlgoType.NSK_ALGO_TYPE_MED.value or
+                NskAlgoType.NSK_ALGO_TYPE_BP.value or
+                NskAlgoType.NSK_ALGO_TYPE_BLINK.value
+        try {
+            val initResult = NskAlgoSdk.NskAlgoInit(algoTypes, "")
+            Log.i(TAG, "NskAlgoInit result: $initResult (types=0x${algoTypes.toString(16)})")
+            val startResult = NskAlgoSdk.NskAlgoStart(false)
+            Log.i(TAG, "NskAlgoStart result: $startResult")
+        } catch (e: Exception) {
+            Log.e(TAG, "NskAlgo init failed: ${e.message}", e)
         }
     }
 
