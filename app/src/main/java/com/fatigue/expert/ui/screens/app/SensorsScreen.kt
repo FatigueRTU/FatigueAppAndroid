@@ -1,5 +1,10 @@
 package com.fatigue.expert.ui.screens.app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -10,9 +15,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.fatigue.expert.FatigueViewModel
 import com.fatigue.expert.sensor.EegSignalProcessor
@@ -67,6 +74,28 @@ fun SensorsScreen(
     var pairedDevices by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
     var objExpanded by remember { mutableStateOf(false) }
     var alertExpanded by remember { mutableStateOf(false) }
+    var btPermissionGranted by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
+    // Check if BT permissions are already granted
+    LaunchedEffect(Unit) {
+        btPermissionGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        }
+    }
+
+    // Runtime permission launcher
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        btPermissionGranted = permissions.values.all { it }
+        if (btPermissionGranted) {
+            scanning = true
+        }
+    }
     val scrollState = rememberScrollState()
     val coroutineScope = rememberCoroutineScope()
 
@@ -236,7 +265,18 @@ fun SensorsScreen(
                                     modifier = Modifier.size(48.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(modifier = Modifier.height(16.dp))
                             }
-                            Button(onClick = { scanning = true }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
+                            Button(onClick = {
+                                if (btPermissionGranted) {
+                                    scanning = true
+                                } else {
+                                    val perms = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                                        arrayOf(Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_SCAN)
+                                    } else {
+                                        arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+                                    }
+                                    permissionLauncher.launch(perms)
+                                }
+                            }, modifier = Modifier.fillMaxWidth().height(56.dp)) {
                                 Icon(Icons.Default.Search, contentDescription = null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(BiString("Meklēt MindWave sensorus", "Search for MindWave Sensors").get())
